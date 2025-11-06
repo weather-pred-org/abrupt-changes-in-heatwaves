@@ -24,6 +24,7 @@ sns.set_theme(style="darkgrid")
 sns.set_palette("pastel")
 
 from HWCompAndStats import get_trends
+from HWCompAndStats import get_trends_utest
 
 def KoeppenMap(zone_map, gdf_KM, min_lon, min_lat, max_lon, max_lat,
               path = 'hcarrillo/diagnosis/KoeppenMaps/', filename = 'Koeppen.pdf'):
@@ -281,10 +282,17 @@ def plot_trends_years(start,end,df,stations,zone_map, min_lon, min_lat, max_lon,
 
 def plot_trends_years_all_indices(start,end,df_all_indices,stations,zone_map, min_lon, min_lat, max_lon, max_lat,
                                   hwdef, vmin=-1,vmax=1, fig_PATH = 'notebooks/hcarrillo', zone='Central_Chile',
-                                  fsize = [10, 5], wspace = 0.2, format = 'pdf', pos_adj = 1.2):
-    
-    cmap = 'seismic' #'jet' #'coolwarm' #'seismic'
+                                  fsize = [10, 5], wspace = 0.2, format = 'pdf', pos_adj = 1.2, 
+                                  trend_type = 'u-test',
+                                  signlevel = 0.05,
+                                  divpoint = 2010):
+    nplots = 5
+    wr = [1, 1, 1, 1, 1]
+    if trend_type == 'linear':
+        nplots = 6
+        wr = [1, 1, 1, 1, 1, 0.1]
 
+    cmap = 'seismic' #'jet' #'coolwarm' #'seismic'
     linthresh = 0.025
     cmap = plt.cm.seismic #coolwarm
     norm = SymLogNorm(linthresh=linthresh, vmin=vmin, vmax=vmax)
@@ -297,17 +305,19 @@ def plot_trends_years_all_indices(start,end,df_all_indices,stations,zone_map, mi
     sns.set_palette("pastel")
     fig = plt.figure(figsize=(fsize[0], fsize[1]))
 
-    gs = GridSpec(1, 6, width_ratios=[1, 1, 1, 1, 1, 0.1], wspace=wspace)#0.2)#0)
-    ax = [fig.add_subplot(gs[i]) for i in range(6)]
+    gs = GridSpec(1, nplots, width_ratios=wr, wspace=wspace)#0.2)#0)
+    ax = [fig.add_subplot(gs[i]) for i in range(nplots)]
 
     mz = 70
 
     trends, r_values, p_values = {}, {}, {}
     for i, hwi in enumerate(list(df_all_indices.keys())):
         #Obtener las tendencias y las estaciones utilizables
-        trends[hwi], r_values[hwi], p_values[hwi] = get_trends(start,end,df_all_indices[hwi])
-
-
+        if trend_type == 'linear':
+            trends[hwi], r_values[hwi], p_values[hwi] = get_trends(start,end,df_all_indices[hwi])
+        elif trend_type == 'u-test':
+            trends[hwi], p_values[hwi] = get_trends_utest(start,end,df_all_indices[hwi], divpoint=divpoint)
+            #trends[hwi] = (trends[hwi]>0)
         #Crear el geodataframe y graficar
         df = pd.DataFrame(trends[hwi],index=[0])
         df = df.transpose()
@@ -319,17 +329,17 @@ def plot_trends_years_all_indices(start,end,df_all_indices,stations,zone_map, mi
         df_sign = pd.DataFrame(p_values[hwi],index=[1])
         df_sign = df_sign.transpose()
         geo_df_sign = geo.GeoDataFrame(df_sign,geometry=geo.points_from_xy(longitude,latitude))
-        geo1_sign = geo_df_sign[geo_df_sign[1]<0.05]
+        geo1_sign = geo_df_sign[geo_df_sign[1]<signlevel]
 
         df_concat = pd.concat([df, df_sign], axis=1)
         geo_df_concat = geo.GeoDataFrame(df_concat,geometry=geo.points_from_xy(longitude,latitude))
         #print(geo_df_concat)
-        geo_up_sign = geo_df_concat[(geo_df_concat[0]>0) & (geo_df_concat[1]<0.05)]
-        geo_down_sign = geo_df_concat[(geo_df_concat[0]<0) & (geo_df_concat[1]<0.05)]
-        geo_notrend_sign = geo_df_concat[(geo_df_concat[0]==0) & (geo_df_concat[1]<0.05)]
-        geo_up_nosign = geo_df_concat[(geo_df_concat[0]>0) & (geo_df_concat[1]>=0.05)]
-        geo_down_nosign = geo_df_concat[(geo_df_concat[0]<0) & (geo_df_concat[1]>=0.05)]
-        geo_notrend_nosign = geo_df_concat[(geo_df_concat[0]==0) & (geo_df_concat[1]>=0.05)]
+        geo_up_sign = geo_df_concat[(geo_df_concat[0]>0) & (geo_df_concat[1]<signlevel)]
+        geo_down_sign = geo_df_concat[(geo_df_concat[0]<0) & (geo_df_concat[1]<signlevel)]
+        geo_notrend_sign = geo_df_concat[(geo_df_concat[0]==0) & (geo_df_concat[1]<signlevel)]
+        geo_up_nosign = geo_df_concat[(geo_df_concat[0]>0) & (geo_df_concat[1]>=signlevel)]
+        geo_down_nosign = geo_df_concat[(geo_df_concat[0]<0) & (geo_df_concat[1]>=signlevel)]
+        geo_notrend_nosign = geo_df_concat[(geo_df_concat[0]==0) & (geo_df_concat[1]>=signlevel)]
         print(hwi)
         #print(geo_up_sign)
 
@@ -360,24 +370,25 @@ def plot_trends_years_all_indices(start,end,df_all_indices,stations,zone_map, mi
 
         ax[i].set_title(hwi)
 
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-    sm._A = []  # Dummy mappable object to be used for colorbar
+    if trend_type == 'linear':
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm._A = []  # Dummy mappable object to be used for colorbar
 
-    # Add the colorbar to the last subplot area
-    ax[-1].set_yticklabels([])
-    ax[-1].set_xticklabels('')
-    ax[-1].set_title('')
-    cax = fig.add_subplot(gs[-1])
-    cbar = fig.colorbar(sm, cax=cax)#, label='Slope')
-    cbar.set_label('Slope', rotation=-90, labelpad=10)  # Rotate the label 270 degrees
+        # Add the colorbar to the last subplot area
+        ax[-1].set_yticklabels([])
+        ax[-1].set_xticklabels('')
+        ax[-1].set_title('')
+        cax = fig.add_subplot(gs[-1])
+        cbar = fig.colorbar(sm, cax=cax)#, label='Slope')
+        cbar.set_label('Slope', rotation=-90, labelpad=10)  # Rotate the label 270 degrees
     
     # Manually adjust the positions of the subplots to reduce space
-    for i in range(5):
+    for i in range(nplots):
         pos1 = ax[i].get_position() # get the original position
         #pos2 = [pos1.x0, pos1.y0, pos1.width * 1.2, pos1.height]
         pos2 = [pos1.x0, pos1.y0, pos1.width * pos_adj, pos1.height]
         ax[i].set_position(pos2) # set a new position
 
-    fig.savefig(fig_PATH + 'Trends_' + zone +'_Indices_' + hwdef + '.' + format, format=format, bbox_inches='tight', dpi=150)
+    fig.savefig(fig_PATH + 'Trends_' + trend_type + '_' + zone +'_Indices_' + hwdef + '.' + format, format=format, bbox_inches='tight', dpi=150)
     return trends, r_values, p_values
 
