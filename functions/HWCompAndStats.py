@@ -18,6 +18,9 @@ from scipy import stats
 
 from matplotlib.ticker import NullLocator
 
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+
 
 
 def model(x, params):
@@ -209,6 +212,7 @@ class HW_statistics:
     def HW_funs(self, Tind_type: str,
         Tcrit_dict: dict,
         Nd: int,
+        #date_init, date_end): #we specify two dates that define a time interval in which hws will be detected
         year_window_init: int, year_window_end: int):#,
 
         data_Tind = self.Tind(Tind_type)
@@ -392,7 +396,62 @@ class HW_statistics:
             fig.savefig(filename, format='pdf', bbox_inches='tight')
 
 
+def climate_year():
+    ...
 
+def HW_indices_by_season(hw1, HWDef, start_year, end_year, year_window):
+    #this function is for a single HW definition and for a single station
+    #year window is the climatological reference period.
+    #start-end year is the time period in which hws are detected
+    seasons = ['DJF', 'MAM', 'JJA', 'SON', 'Total']#, 'Full']
+    hw_stats_by_year = {}
+    for yw in list(year_window.keys()): #range(1, len(year_window)+1):
+        hw_annual_stats = {}
+        _, _, heatwaves = hw1.HW_funs(HWDef['Tind_type'], HWDef['Tcrit_dict'], HWDef['Nd'], year_window[yw][0], year_window[yw][1])
+        for season in seasons:
+            hw_annual_stats[season] = pd.DataFrame(columns=['HWN', 'HWF', 'HWD', 'HWM', 'HWA'], index=range(start_year, end_year+1))
+        for year_to_analyze in range(start_year, end_year+1):
+            hw_year = {}
+            hw_year['DJF'] = heatwaves[
+                (heatwaves['start'] >= pd.to_datetime(f'{year_to_analyze-1}-12-01')) &
+                (heatwaves['start'] <= pd.to_datetime(f'{year_to_analyze}-02-28'))
+                ]
+            hw_year['MAM'] = heatwaves[
+                (heatwaves['start'] >= pd.to_datetime(f'{year_to_analyze}-03-01')) &
+                (heatwaves['start'] <= pd.to_datetime(f'{year_to_analyze}-05-31'))
+                ]
+            hw_year['JJA'] = heatwaves[
+                (heatwaves['start'] >= pd.to_datetime(f'{year_to_analyze}-06-01')) &
+                (heatwaves['start'] <= pd.to_datetime(f'{year_to_analyze}-08-31'))
+                ]
+            hw_year['SON'] = heatwaves[
+                (heatwaves['start'] >= pd.to_datetime(f'{year_to_analyze}-09-01')) &
+                (heatwaves['start'] <= pd.to_datetime(f'{year_to_analyze}-11-30'))
+                ]
+            hw_year['Total'] = heatwaves[
+                (heatwaves['start'] >= pd.to_datetime(f'{year_to_analyze-1}-12-01')) &
+                (heatwaves['start'] <= pd.to_datetime(f'{year_to_analyze}-11-30'))
+                ]
+            #hw_year['Total'] = pd.concat([hw_year[k] for k in list(hw_year.keys())], ignore_index=True)
+            #hw_year = heatwaves[heatwaves['start'].dt.year == year_to_analyze]
+            for season in seasons:
+                hw_annual_stats[season]['HWN'][year_to_analyze] = len(hw_year[season])
+                hw_annual_stats[season]['HWF'][year_to_analyze] = np.sum(hw_year[season]['duration'])
+                hw_annual_stats[season]['HWD'][year_to_analyze] = np.max(hw_year[season]['duration'])
+                if np.isnan(hw_annual_stats[season]['HWD'][year_to_analyze]): #if a year does not have any heatwave event, then the duration is set to be 0. 
+                    hw_annual_stats[season]['HWD'][year_to_analyze] = 0.0
+                hw_annual_stats[season]['HWM'][year_to_analyze] = np.sum(
+                    np.array(hw_year[season]['duration'], dtype=float)*np.array(
+                        hw_year[season]['magnitude'], dtype=float))/np.sum(np.array(
+                            hw_year[season]['duration'], dtype=float))
+                if np.isnan(hw_annual_stats[season]['HWM'][year_to_analyze]): #if a year does not have any heatwave event, then the duration is set to be 0. 
+                    hw_annual_stats[season]['HWM'][year_to_analyze] = 0.0
+                hw_annual_stats[season]['HWA'][year_to_analyze] = np.max(hw_year[season]['max_magn'])
+                if np.isnan(hw_annual_stats[season]['HWA'][year_to_analyze]): #if a year does not have any heatwave event, then the duration is set to be 0. 
+                    hw_annual_stats[season]['HWA'][year_to_analyze] = 0.0
+        hw_stats_by_year[yw] = hw_annual_stats
+
+    return hw_stats_by_year
 
 
 def HW_indices_by_year(hw1, HWDef, start_year, end_year, year_window):
@@ -423,14 +482,18 @@ def HW_indices_by_year(hw1, HWDef, start_year, end_year, year_window):
 def HW_indices_summary(HWDef_dict, HW_indices, ref_period, stations, start_year, end_year, stations_data):
     #this function uses HW_stats_by_year for different definitions of heatwaves and for different stations
     hw_region_summary = {}
-    for hwdef in list(HWDef_dict.keys()):
-        hw_region_summary[hwdef] = {}
-        for yw in list(ref_period.keys()):
-            hw_region_summary[hwdef][yw] = {}
-            for hwi in HW_indices:
-                hw_region_summary[hwdef][yw][hwi] = pd.DataFrame(columns=['Years'] +stations.index.tolist())#["station_id", "min_year", "max_year"])
-                hw_region_summary[hwdef][yw][hwi]['Years'] = range(start_year, end_year+1)
-                hw_region_summary[hwdef][yw][hwi].set_index('Years', inplace = True)
+    seasons = ['DJF', 'MAM', 'JJA', 'SON', 'Total']
+    for season in seasons:
+        hw_region_summary[season] = {}
+        for hwdef in list(HWDef_dict.keys()):
+            hw_region_summary[season][hwdef] = {}
+            for yw in list(ref_period.keys()):
+                hw_region_summary[season][hwdef][yw] = {}
+                for hwi in HW_indices:
+                    hw_region_summary[season][hwdef][yw][hwi] = pd.DataFrame(
+                        columns=['Years'] +stations.index.tolist())#["station_id", "min_year", "max_year"])
+                    hw_region_summary[season][hwdef][yw][hwi]['Years'] = range(start_year, end_year+1)
+                    hw_region_summary[season][hwdef][yw][hwi].set_index('Years', inplace = True)
 
     for station in stations.index.tolist():
         station_id = str(station)
@@ -440,10 +503,13 @@ def HW_indices_summary(HWDef_dict, HW_indices, ref_period, stations, start_year,
             print('hwdef=')
             print(hwdef)
             hw1 = HW_statistics(data, start_year, end_year)
-            hw_stats_by_year = HW_indices_by_year(hw1, HWDef_dict[hwdef], start_year, end_year, ref_period)
+            #hw_stats_by_year = HW_indices_by_year(hw1, HWDef_dict[hwdef], start_year, end_year, ref_period)
+            hw_stats_by_year = HW_indices_by_season(hw1, HWDef_dict[hwdef], start_year, end_year, ref_period)
+            print(hw_stats_by_year.keys())
             for yw in list(ref_period.keys()):#range(1, len(year_window)+1):
                 for hwi in HW_indices:
-                    hw_region_summary[hwdef][yw][hwi][station] = hw_stats_by_year[yw][hwi]
+                    for season in seasons:
+                        hw_region_summary[season][hwdef][yw][hwi][station] = hw_stats_by_year[yw][season][hwi]
 
     return hw_region_summary
 
@@ -455,29 +521,32 @@ def linear_fit(x, a, b):
 
 def HW_stats_of_indices(hw_region_summary_dict):
 # this function computes the mean and std or the quartiles of the heatwave indices
+    seasons = list(hw_region_summary_dict.keys())
     hwi_stats_region = {}
-    for hwdef in list(hw_region_summary_dict.keys()):
-        hwi_stats_region[hwdef] = {}
-        for yw in list(hw_region_summary_dict[hwdef].keys()):
-            hwi_stats_region[hwdef][yw] = {}
-            for hwi in list(hw_region_summary_dict[hwdef][yw].keys()):
-                hwi_stats_region[hwdef][yw][hwi] = pd.DataFrame(columns = ["mean", "std", 'min', 'max', 'Q1', 'Q2', 'Q3'])#, "median"])
-                hwi_stats_region[hwdef][yw][hwi]["mean"] = np.mean(hw_region_summary_dict[hwdef][yw][hwi], axis = 1)
-                hwi_stats_region[hwdef][yw][hwi]["std"] = np.std(hw_region_summary_dict[hwdef][yw][hwi], axis = 1)
-                hwi_stats_region[hwdef][yw][hwi]["min"] = np.min(hw_region_summary_dict[hwdef][yw][hwi], axis = 1)
-                hwi_stats_region[hwdef][yw][hwi]["max"] = np.max(hw_region_summary_dict[hwdef][yw][hwi], axis = 1)
-                quartiles_hw_region = hw_region_summary_dict[hwdef][yw][hwi].apply(compute_quartiles, axis=1)
+    for season in seasons:
+        hwi_stats_region[season] = {}
+        for hwdef in list(hw_region_summary_dict[season].keys()):
+            hwi_stats_region[season][hwdef] = {}
+            for yw in list(hw_region_summary_dict[season][hwdef].keys()):
+                hwi_stats_region[season][hwdef][yw] = {}
+                for hwi in list(hw_region_summary_dict[season][hwdef][yw].keys()):
+                    hwi_stats_region[season][hwdef][yw][hwi] = pd.DataFrame(columns = ["mean", "std", 'min', 'max', 'Q1', 'Q2', 'Q3'])#, "median"])
+                    hwi_stats_region[season][hwdef][yw][hwi]["mean"] = np.mean(hw_region_summary_dict[season][hwdef][yw][hwi], axis = 1)
+                    hwi_stats_region[season][hwdef][yw][hwi]["std"] = np.std(hw_region_summary_dict[season][hwdef][yw][hwi], axis = 1)
+                    hwi_stats_region[season][hwdef][yw][hwi]["min"] = np.min(hw_region_summary_dict[season][hwdef][yw][hwi], axis = 1)
+                    hwi_stats_region[season][hwdef][yw][hwi]["max"] = np.max(hw_region_summary_dict[season][hwdef][yw][hwi], axis = 1)
+                    quartiles_hw_region = hw_region_summary_dict[season][hwdef][yw][hwi].apply(compute_quartiles, axis=1)
 
-                hwi_stats_region[hwdef][yw][hwi]['Q1'] = quartiles_hw_region['Q1'].copy()#, 'Q2', 'Q3'] = quartiles_hw_CC
-                hwi_stats_region[hwdef][yw][hwi]['Q2'] = quartiles_hw_region['Q2'].copy()#, 'Q2', 'Q3'] = quartiles_hw_CC
-                hwi_stats_region[hwdef][yw][hwi]['Q3'] = quartiles_hw_region['Q3'].copy()#, 'Q2', 'Q3'] = quartiles_hw_CC
+                    hwi_stats_region[season][hwdef][yw][hwi]['Q1'] = quartiles_hw_region['Q1'].copy()#, 'Q2', 'Q3'] = quartiles_hw_CC
+                    hwi_stats_region[season][hwdef][yw][hwi]['Q2'] = quartiles_hw_region['Q2'].copy()#, 'Q2', 'Q3'] = quartiles_hw_CC
+                    hwi_stats_region[season][hwdef][yw][hwi]['Q3'] = quartiles_hw_region['Q3'].copy()#, 'Q2', 'Q3'] = quartiles_hw_CC
     return hwi_stats_region
 
 
 def plot_stats_of_hwi(hwi_stats_region: dict, indice: str, ref_period:str, stat = 'Q', add_line = False,
                       add_slope = False,
                       saveplot = False, folder = None, filename = 'hwdef_and_region.pdf',
-                      ymax = None):
+                      ymax = None, season = ''):
     sns.set_theme(rc={'figure.figsize':(20,8.27)})
     #sns.set_theme(style="darkgrid")
     sns.set_theme(style="ticks")
@@ -536,7 +605,7 @@ def plot_stats_of_hwi(hwi_stats_region: dict, indice: str, ref_period:str, stat 
             ymax = np.max(np.array(hwi_stats_region[ref_period][indice]["mean"], dtype = float) \
             + np.array(hwi_stats_region[ref_period][indice]["std"], dtype = float)) +1.5 
     plt.ylim([0, ymax])
-    plt.ylabel(indice)
+    plt.ylabel(indice + season)
     
     ticks = [value for value in x if value % 10 == 0]
     plt.xticks(ticks)
@@ -553,7 +622,7 @@ def plot_stats_of_hwi(hwi_stats_region: dict, indice: str, ref_period:str, stat 
 
 
 def plot_t_and_u_test_p_values(hw_stats_by_year_ref, indice, yw = [1970, 2023], length = 10, t_or_u_plot = None,
-                          saveplot = False, folder = None, region_name = None):
+                          saveplot = False, folder = None, region_name = None, type_test = 'one_sided'):
     sns.set_theme(rc={'figure.figsize':(20,8.27)})
     #sns.set_theme(style="darkgrid")
     sns.set_theme(style="ticks")
@@ -572,7 +641,13 @@ def plot_t_and_u_test_p_values(hw_stats_by_year_ref, indice, yw = [1970, 2023], 
 
     if t_or_u_plot == 't_stat':
         y1 = t_stats
-        y2 = p_values
+        
+        if type_test == 'one_sided':
+            one_sided_p_value = 0.5*p_values*(t_stats < 0) + (1- p_values/2)*(t_stats >= 0)
+            y2 = one_sided_p_value
+        else:
+            y2 = p_values
+        #one_sided_p_value = p_value / 2 if t_stat > 0 else 1 - (p_value / 2)
 
         # Create the main figure and axis
         fig, ax1 = plt.subplots(figsize=(6,3.4))
@@ -650,8 +725,10 @@ def plot_t_and_u_test_p_values(hw_stats_by_year_ref, indice, yw = [1970, 2023], 
 
 
 
-def plot_t_and_u_test_all_indices(hw_stats_by_year_ref, indices, meas ='mean', yw = [1971, 2023], length = 10, t_or_u_plot = None,
-                          saveplot = False, folder = None, region_name = None):
+def plot_t_and_u_test_all_indices(hw_stats_by_year_ref, indices, meas ='mean', 
+                        yw = [1971, 2023], length = 10, t_or_u_plot = None,
+                        saveplot = False, folder = None, region_name = None, 
+                        season = '', test='u', type_test = 'one_sided'):
     sns.set_theme(rc={'figure.figsize':(20,8.27)})
     sns.set_theme(style="ticks")
     sns.set_palette("tab10")
@@ -661,24 +738,45 @@ def plot_t_and_u_test_all_indices(hw_stats_by_year_ref, indices, meas ='mean', y
     fig, ax1 = plt.subplots(figsize=(6,3.4))
 
     for indice in indices:
-        t_stats = np.zeros((len(range(yws+length, ywe-length+2)),))
-        p_values = np.zeros((len(range(yws+length, ywe-length+2)),))
-        u_stats_m = np.zeros((len(range(yws+length, ywe-length+2)),))
-        p_values_m = np.zeros((len(range(yws+length, ywe-length+2)),))
+        if test == 't':
+            t_stats = np.zeros((len(range(yws+length, ywe-length+2)),))
+            p_values = np.zeros((len(range(yws+length, ywe-length+2)),))
+        else:
+            u_stats_m = np.zeros((len(range(yws+length, ywe-length+2)),))
+            p_values_m = np.zeros((len(range(yws+length, ywe-length+2)),))
         for j in range(yws+length, ywe-length+2):
             x = np.array([hw_stats_by_year_ref[indice][meas][i] for i in range(j-length,j)], dtype=float)
             y = np.array([hw_stats_by_year_ref[indice][meas][i] for i in range(j, j+length)], dtype=float)
-            t_stats[j-(yws+length)], p_values[j-(yws+length)] = stats.ttest_ind(x, y)
-            u_stats_m[j-(yws+length)], p_values_m[j-(yws+length)] = stats.mannwhitneyu(x, y, alternative='two-sided')
-
-        y1 = u_stats_m
-        y2 = p_values_m
+            if test == 't':
+                t_stats[j-(yws+length)], p_values[j-(yws+length)] = stats.ttest_ind(x, y)
+                y1 = t_stats
+                y2 = p_values
+                if type_test == 'one_sided': #H0: mu_1\leq \mu_2; H1: \mu_1 > \mu_2
+                    one_sided_p_value = 0.5*p_values*(t_stats < 0) + (1- p_values/2)*(t_stats >= 0)
+                    y2 = one_sided_p_value
+                #else:
+                #    y2 = p_values
+            else:
+                u_stats_m[j-(yws+length)], p_values_m[j-(yws+length)] = stats.mannwhitneyu(x, y, alternative='two-sided')
+                y1 = u_stats_m
+                y2 = p_values_m
+                if type_test == 'one_sided':
+                    #one_sided_p_value = 0.5*p_values_m*(u_stats_m < 0) + (1- p_values_m/2)*(u_stats_m >= 0)
+                    one_sided_p_value = 0.5*p_values_m*(u_stats_m < length**2 / 2) \
+                                        + (1 - (p_values_m / 2))*(u_stats_m >= length**2 / 2)
+                    y2 = one_sided_p_value
+                #else:
+                #    y2 = p_values
 
         ax1.plot(np.array(range(yws+length, ywe-length+2), dtype=int), y2, '-', label=indice)
         
-    ax1.axhline(y = 0.05, color = 'lightgray', linestyle = '--', label='Sign.level')
+    sl_alphas = [0.05]#, 0.01, 0.005]
+    linestyles = ['--', ':', '-.']
+    for i, alpha in enumerate(sl_alphas):
+        ax1.axhline(y = alpha, color = 'lightgray', linestyle = linestyles[i],
+                    label=r'Sign.level $\alpha=$' + f'{alpha}')
 
-    plt.ylabel('p-values')
+    plt.ylabel('p-values' + season)
     plt.yscale('log')
     plt.grid()
     
@@ -691,7 +789,7 @@ def plot_t_and_u_test_all_indices(hw_stats_by_year_ref, indices, meas ='mean', y
     ax1.set_xticks(ticks)
 
     if saveplot:
-        fig.savefig(folder + 'u_test_all_indices_' + meas + '_' + region_name + '_length=' + str(length) + '.pdf',
+        fig.savefig(folder + test + '_test_all_indices_' + meas + '_' + region_name + '_length=' + str(length) + season + '.pdf',
                         bbox_inches='tight', format='pdf')
 
 
@@ -720,8 +818,11 @@ def plot_kolmog_or_levene_test_all_indices(hw_stats_by_year_ref, indices, meas =
         y2 = p_values_m
 
         ax1.plot(np.array(range(yws+length, ywe-length+2), dtype=int), y2, '-', label=indice)
-        
-    ax1.axhline(y = 0.05, color = 'lightgray', linestyle = '--', label='Sign.level')
+    
+    sl_alphas = [0.05]#, 0.01, 0.005]
+    for alpha in sl_alphas:
+        ax1.axhline(y = alpha, color = 'lightgray', linestyle = '--',
+                    label=r'Sign.level $\alpha=$' + f'{alpha}')
 
     plt.ylabel('p-values')#+ ' in Central Chile')
     plt.yscale('log')
@@ -735,7 +836,195 @@ def plot_kolmog_or_levene_test_all_indices(hw_stats_by_year_ref, indices, meas =
     if saveplot:
         fig.savefig(folder + k_or_l_plot + '_test_all_indices_' + meas + '_' + region_name + '_length=' + str(length) + '.pdf',
                         bbox_inches='tight', format='pdf')
+
+
+
+def plot_t_and_u_test_all_indices_by_season(hw_stats_by_year_ref, meas ='mean', 
+                        yw = [1971, 2023], length = 10, t_or_u_plot = None,
+                        saveplot = False, folder = None, region_name = None, 
+                        indice = 'HWN', seasons = None, test='u', type_test = 'one_sided'):
+    ### LA IDEA AQUI ES QUE CADA GRAFICO MUESTRE LAS 4 ESTACIONES PARA 1 INDICE
+    sns.set_theme(rc={'figure.figsize':(20,8.27)})
+    sns.set_theme(style="ticks")
+    sns.set_palette("tab10")
+
+    yws, ywe = yw[0], yw[1]
+
+    fig, ax1 = plt.subplots(figsize=(6,3.4))
+    if seasons is None:
+        seasons = list(hw_stats_by_year_ref.keys())
+    for season in seasons:
+        if test == 't':
+            t_stats = np.zeros((len(range(yws+length, ywe-length+2)),))
+            p_values = np.zeros((len(range(yws+length, ywe-length+2)),))
+        else:
+            u_stats_m = np.zeros((len(range(yws+length, ywe-length+2)),))
+            p_values_m = np.zeros((len(range(yws+length, ywe-length+2)),))
+        for j in range(yws+length, ywe-length+2):
+            x = np.array([hw_stats_by_year_ref[season][indice][meas][i] for i in range(j-length,j)], dtype=float)
+            y = np.array([hw_stats_by_year_ref[season][indice][meas][i] for i in range(j, j+length)], dtype=float)
+            if test == 't':
+                t_stats[j-(yws+length)], p_values[j-(yws+length)] = stats.ttest_ind(x, y)
+                y1 = t_stats
+                y2 = p_values
+                if type_test == 'one_sided': #H0: mu_1\leq \mu_2; H1: \mu_1 > \mu_2
+                    one_sided_p_value = 0.5*p_values*(t_stats < 0) + (1- p_values/2)*(t_stats >= 0)
+                    y2 = one_sided_p_value
+                #else:
+                #    y2 = p_values
+            else:
+                u_stats_m[j-(yws+length)], p_values_m[j-(yws+length)] = stats.mannwhitneyu(x, y, alternative='two-sided')
+                y1 = u_stats_m
+                y2 = p_values_m
+                if type_test == 'one_sided':
+                    #one_sided_p_value = 0.5*p_values_m*(u_stats_m < 0) + (1- p_values_m/2)*(u_stats_m >= 0)
+                    one_sided_p_value = 0.5*p_values_m*(u_stats_m < length**2 / 2) \
+                                        + (1 - (p_values_m / 2))*(u_stats_m >= length**2 / 2)
+                    y2 = one_sided_p_value
+                #else:
+                #    y2 = p_values
+
+        ax1.plot(np.array(range(yws+length, ywe-length+2), dtype=int), y2, '-', label=season)
         
+    sl_alphas = [0.05]#, 0.01, 0.005]
+    linestyles = ['--', ':', '-.']
+    for i, alpha in enumerate(sl_alphas):
+        ax1.axhline(y = alpha, color = 'lightgray', linestyle = linestyles[i],
+                    label=r'Sign.level $\alpha=$' + f'{alpha}')
+
+    plt.ylabel('p-values')
+    plt.yscale('log')
+    plt.grid()
+    
+    plt.xlabel('x (year)')
+    plt.legend(fontsize=8)
+    plt.title(indice)
+    xforticks = np.array(range(yws+length, ywe-length+2), dtype=int)
+    xforticks = np.sort(np.append(xforticks, [xforticks[0]-1, xforticks[-1]+1]))
+    ax1.set_xlim([xforticks[0], xforticks[-1]+0.5])
+    ticks = [value for value in xforticks if value % 5 == 0]
+    ax1.set_xticks(ticks)
+
+    if saveplot:
+        fig.savefig(folder + test + '_test_' + indice + '_' + meas + '_' + region_name + '_length=' + str(length) + '.pdf',
+                        bbox_inches='tight', format='pdf')
+        
+
+def plot_slope_test_all_indices_by_season(hw_stats_by_year_ref, meas ='mean', 
+                        yw = [1971, 2023], length = 10, t_or_u_plot = None,
+                        saveplot = False, folder = None, region_name = None, 
+                        indice = 'HWN', seasons = None, test='u', type_test = 'one_sided'):
+    ### LA IDEA AQUI ES QUE CADA GRAFICO MUESTRE LAS 4 ESTACIONES PARA 1 INDICE
+    sns.set_theme(rc={'figure.figsize':(20,8.27)})
+    sns.set_theme(style="ticks")
+    sns.set_palette("tab10")
+
+    yws, ywe = yw[0], yw[1]
+
+    fig, ax1 = plt.subplots(figsize=(6,3.4))
+    if seasons is None:
+        seasons = list(hw_stats_by_year_ref.keys())
+    for season in seasons:
+        if test == 't':
+            t_stats = np.zeros((len(range(yws+length, ywe-length+2)),))
+            p_values = np.zeros((len(range(yws+length, ywe-length+2)),))
+        else:
+            u_stats_m = np.zeros((len(range(yws+length, ywe-length+2)),))
+            p_values_m = np.zeros((len(range(yws+length, ywe-length+2)),))
+        for j in range(yws+length, ywe-length+2):
+            #TODO
+            t = np.linspace(j, j + length, num=length, dtype=float)
+            x = np.array([hw_stats_by_year_ref[season][indice][meas][i] for i in range(j-length,j)], dtype=float)
+            y = np.array([hw_stats_by_year_ref[season][indice][meas][i] for i in range(j, j+length)], dtype=float)
+            #data = pd.DataFrame({
+            #    'x': np.concatenate([t, x]),
+            #    'y': np.concatenate([t, y]),
+            #    'group': np.concatenate([np.zeros(length), np.ones(length)])  # 0 for group 1, 1 for group 2
+            #})
+            #model = smf.ols('y ~ x * group', data=data).fit()
+            #interaction_pval = model.pvalues['x:group']
+
+
+            data1 = pd.DataFrame({'x': t, 'y': x})
+            data2 = pd.DataFrame({'x': t, 'y': y})
+
+            # Combine the data
+            data1['group'] = 0
+            data2['group'] = 1
+            combined_data = pd.concat([data1, data2], ignore_index=True)
+
+            # Fit the interaction model
+            combined_data['x_group'] = combined_data['x'] * combined_data['group']
+            model = smf.ols('y ~ x + group + x_group', data=combined_data).fit()
+            interaction_p_value = model.pvalues['x_group'] / 2  # Divide by 2 for one-sided test
+            print(j)
+            print("One-sided p-value for slope comparison:", interaction_p_value)
+
+            p_values[j-(yws+length)] = interaction_p_value
+
+            #if interaction_pval / 2 < 0.05 and model.params['x:group'] > 0:
+            #    result = "Reject the null hypothesis: beta2 > beta1"
+            #else:
+            #    result = "Fail to reject the null hypothesis"
+
+            #print(result)
+        if False:
+            xbeta, xintercept, xr_value, xp_value, xstd_err = stats.linregress(t, x) #######
+            if xbeta > 0:
+                one_tailed_p_value = xp_value / 2
+            else:
+                one_tailed_p_value = 1 - (xp_value / 2)
+
+            print(f'for {j} the slope is {xbeta} with p-value {one_tailed_p_value}')
+            ytrend, yintercept, yr_value, yp_values, ystd_err = stats.linregress(t, y) #######
+
+            #xtrend = np.array([hw_stats_by_year_ref[season][indice][meas][i] for i in range(j-length,j)], dtype=float)
+            #ytrend = np.array([hw_stats_by_year_ref[season][indice][meas][i] for i in range(j, j+length)], dtype=float)
+            if test == 't':
+                t_stats[j-(yws+length)], p_values[j-(yws+length)] = stats.ttest_ind(xbeta, ytrend)
+                y1 = t_stats
+                y2 = p_values
+                if type_test == 'one_sided': #H0: mu_1\leq \mu_2; H1: \mu_1 > \mu_2
+                    one_sided_p_value = 0.5*p_values*(t_stats < 0) + (1- p_values/2)*(t_stats >= 0)
+                    y2 = one_sided_p_value
+                #else:
+                #    y2 = p_values
+            else:
+                u_stats_m[j-(yws+length)], p_values_m[j-(yws+length)] = stats.mannwhitneyu(xbeta, ytrend, alternative='two-sided')
+                y1 = u_stats_m
+                y2 = p_values_m
+                if type_test == 'one_sided':
+                    #one_sided_p_value = 0.5*p_values_m*(u_stats_m < 0) + (1- p_values_m/2)*(u_stats_m >= 0)
+                    one_sided_p_value = 0.5*p_values_m*(u_stats_m < length**2 / 2) \
+                                        + (1 - (p_values_m / 2))*(u_stats_m >= length**2 / 2)
+                    y2 = one_sided_p_value
+                #else:
+                #    y2 = p_values
+        y2 = p_values
+        ax1.plot(np.array(range(yws+length, ywe-length+2), dtype=int), y2, '-', label=season)
+        
+    sl_alphas = [0.05]#, 0.01, 0.005]
+    linestyles = ['--', ':', '-.']
+    for i, alpha in enumerate(sl_alphas):
+        ax1.axhline(y = alpha, color = 'lightgray', linestyle = linestyles[i],
+                    label=r'Sign.level $\alpha=$' + f'{alpha}')
+
+    plt.ylabel('p-values')
+    plt.yscale('log')
+    plt.grid()
+    
+    plt.xlabel('x (year)')
+    plt.legend(fontsize=8)
+    plt.title(indice)
+    xforticks = np.array(range(yws+length, ywe-length+2), dtype=int)
+    xforticks = np.sort(np.append(xforticks, [xforticks[0]-1, xforticks[-1]+1]))
+    ax1.set_xlim([xforticks[0], xforticks[-1]+0.5])
+    ticks = [value for value in xforticks if value % 5 == 0]
+    ax1.set_xticks(ticks)
+
+    if saveplot:
+        fig.savefig(folder + test + '_test_' + hwi + '_' + meas + '_' + region_name + '_length=' + str(length) + '.pdf',
+                        bbox_inches='tight', format='pdf')
 
 
 
@@ -765,6 +1054,31 @@ def get_trends(start, end, df):
 
     return trends, r_value, p_values
 
+
+def get_trends_utest(start, end, df, divpoint = 2010):
+    #Filtrar los datos según el rango de años
+    df_start=df[df.index>=start]
+    df_end=df_start[df_start.index<=end]
+    usable=df_end.columns.values.tolist()
+
+    #Descartar las columnas con valores nulos
+    for item in df_end.columns.values:
+        if df_end[item].isna().values.any():
+            usable.remove(item)
+    df_final=df_end[usable]
+
+    #Calcular las tendencias y significancia
+    u_stat = {}
+    p_values = {}
+
+    for item in usable:
+        #X=np.array(df_final.index, dtype = float)
+        Y=np.array(df_final[item].values, dtype = float)
+        x = Y[:end-divpoint]
+        y = Y[end-divpoint:]
+        u_stat[item], p_values[item] = stats.mannwhitneyu(x, y, alternative='less') #for a left-sided H0
+
+    return u_stat, p_values
 
 
 #### indicatrix of a heatwave, with daily frequency.
